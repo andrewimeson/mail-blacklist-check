@@ -6,7 +6,7 @@ sudo: false
 
 script:
   # for now just check the main program
-  - shellcheck --format=checkstyle mail-blacklist-check
+  - shellcheck --format=gcc mail-blacklist-check
 
 matrix:
   fast_finish: true
