@@ -1,0 +1,12 @@
+---
+language: ksh
+
+# Use container-based infrastructure for quicker build start-up
+sudo: false
+
+script:
+  # for now just check the main program
+  - shellcheck --format=checkstyle mail-blacklist-check
+
+matrix:
+  fast_finish: true
