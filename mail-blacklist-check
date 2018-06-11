@@ -1,0 +1,118 @@
+#!/bin/ksh
+# shellcheck disable=SC2113
+# 'mail-blacklist-check' - A shell script for checking whether mail servers are
+# listed on common blacklists. Intended to be integrated into monitoring tools 
+# or cron jobs
+# https://github.com/andrewimeson/mail-blacklist-check
+
+# NOTE: if you want to be able to update to newer versions, put your
+# customizations in a file (or multiple) ending in the ./blacklists/ folder
+# with the extension ".blacklists"
+
+# TODO: make these overrideable, through variables or options
+blacklists_loc="./blacklists/*.blacklist"
+log_file="/dev/stdout"
+error_log_file="/dev/stderr"
+
+function log {
+  printf '%(%F %T)T\t %s\n' "-1" "$*" >> $log_file
+}
+
+# TODO: tee this to STDERR 
+function err {
+  printf '%(%F %T)T\t %s\n' "-1" "$*" >> $error_log_file
+}
+
+function die {
+  retval=$?
+  if [[ $retval == 0 ]]; then 
+    log "$*"
+    exit $retval
+  else
+    err "$*"
+    exit $retval
+  fi
+}
+
+# TODO: this doesn't actually fail on invalid entries...
+# TODO: convert this to shell regex for portability
+# shellcheck disable=SC2086
+function validate_blacklist {
+  grep -qxE \
+  '^(([[:alpha:]](-?[[:alnum:]])*)\.)*[[:alpha:]](-?[[:alnum:]])+\.[[:alpha:]]{2,}$' \
+  $blacklists_loc 
+}
+
+# TODO: validate that it's actually an IPv4 address first? Or assume that's
+#       being doing elsewhere
+function reverse_ipv4 {
+  OIFS=$IFS
+  IFS=.
+  set -- $1
+  echo $4.$3.$2.$1
+  IFS=$OIFS
+}
+
+# TODO: shellcheck doesn't like the regex
+function is_ipv4 {
+  ip=$1
+  if [[ "$ip" == {1,3}(\d).{1,3}(\d).{1,3}(\d).{1,3}(\d) ]]; then
+    OIFS=$IFS
+    IFS='.'
+    ip=($ip)
+    IFS=$OIFS
+    if [[ ${ip[0]} -le 255 && ${ip[1]} -le 255 \
+        && ${ip[2]} -le 255 && ${ip[3]} -le 255 ]]; then
+      return 0
+    else
+      return 1
+    fi
+  else 
+    return 1
+  fi
+}
+
+function get_ipv4 {
+  output="$(dig $1 a +short)"
+  if is_ipv4 "$output"; then
+    print "$output"
+    return 0
+  else
+    return 1
+  fi
+}
+
+#feed it a single IPv4 and a single blacklist
+function ipv4_is_clean {
+  ip=$1
+  blacklist=$2
+  output=$(dig $(reverse_ipv4 $ip).${blacklist} +short)
+  if [[ "$output" = 127.* ]]; then
+    err "$ip is dirty on $blacklist - $output"
+    return 1
+  else
+    # TODO: control verbosity with options or env variables
+    #log "$ip is clean on $blacklist - $output"
+    return 0
+  fi
+}
+
+validate_blacklist || die "invalid blacklists"
+
+for name_or_ip in "$@"; do
+  for blacklist in $(cat $blacklists_loc); do
+    sleep .1
+    if is_ipv4 $name_or_ip; then
+      ipv4_is_clean "$name_or_ip" "$blacklist" || blacklisted=1
+    else
+      ip=$(get_ipv4 $name_or_ip)
+      ipv4_is_clean "$ip" "$blacklist" || blacklisted=1
+    fi
+  done
+done
+
+if [[ $blacklisted = 1 ]]; then
+    exit 1
+fi
+
+#TODO: Add option for PTR-matching check
